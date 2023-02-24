@@ -1,0 +1,4 @@
+http.client
+os-sys==1.0.0
+urllib3==1.26.7
+#xmlrpc.client==0.1.0
